@@ -1,8 +1,156 @@
 // hr.blackroad.io — HR Portal
 // BlackRoad OS, Inc. — All Rights Reserved
+// PROPRIETARY AND CONFIDENTIAL
+// NOT FOR DISTRIBUTION OR REUSE WITHOUT EXPRESS WRITTEN PERMISSION
 
 const DATA_URL = 'https://blackroad-os-api.amundsonalexa.workers.dev/health';
 const AGENTS_API = 'https://blackroad-os-api.amundsonalexa.workers.dev';
+
+// ---------------------------------------------------------------------------
+// Authentication helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate a bearer token or X-API-Key header against the configured secret.
+ * The secret is stored as the BLACKROAD_API_SECRET environment variable /
+ * Cloudflare Worker secret — never hard-coded.
+ */
+function isAuthenticated(request, env) {
+  const apiSecret = env.BLACKROAD_API_SECRET;
+  if (!apiSecret) return false; // secret not configured → deny all
+
+  // Accept either Authorization: Bearer <token> or X-API-Key: <token>
+  const authHeader = request.headers.get('Authorization') || '';
+  const apiKeyHeader = request.headers.get('X-API-Key') || '';
+
+  const bearerToken = authHeader.startsWith('Bearer ')
+    ? authHeader.slice(7).trim()
+    : '';
+
+  return bearerToken === apiSecret || apiKeyHeader === apiSecret;
+}
+
+function unauthorizedResponse() {
+  return new Response(
+    JSON.stringify({
+      error: 'Unauthorized',
+      message:
+        'A valid API key is required. Contact blackroad.systems@gmail.com to become a contributor and obtain access.',
+    }),
+    {
+      status: 401,
+      headers: {
+        'Content-Type': 'application/json',
+        'WWW-Authenticate': 'Bearer realm="BlackRoad OS"',
+        'X-BlackRoad-Worker': 'hr-blackroadio',
+      },
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stripe webhook handler
+// ---------------------------------------------------------------------------
+
+/**
+ * Verify and process an inbound Stripe webhook.
+ * Stripe signature verification requires the raw request body and the
+ * STRIPE_WEBHOOK_SECRET environment variable / Cloudflare secret.
+ *
+ * Full HMAC verification is delegated to a Cloudflare-compatible library;
+ * here we verify the timestamp + signature using the Web Crypto API so that
+ * no third-party npm package is needed at runtime.
+ */
+async function handleStripeWebhook(request, env) {
+  const webhookSecret = env.STRIPE_WEBHOOK_SECRET;
+  if (!webhookSecret) {
+    return new Response(JSON.stringify({ error: 'Stripe webhook secret not configured' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const signature = request.headers.get('stripe-signature') || '';
+  const body = await request.text();
+
+  // Parse t= and v1= fields from the Stripe-Signature header
+  const sigParts = Object.fromEntries(
+    signature.split(',').map((part) => {
+      const [k, ...rest] = part.split('=');
+      return [k.trim(), rest.join('=')];
+    }),
+  );
+
+  const timestamp = sigParts['t'];
+  const v1 = sigParts['v1'];
+
+  if (!timestamp || !v1) {
+    return new Response(JSON.stringify({ error: 'Invalid Stripe signature header' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Reject webhooks older than 5 minutes to prevent replay attacks
+  const tolerance = 300;
+  if (Math.abs(Date.now() / 1000 - parseInt(timestamp, 10)) > tolerance) {
+    return new Response(JSON.stringify({ error: 'Webhook timestamp too old' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // HMAC-SHA256 verification using Web Crypto API
+  const signedPayload = `${timestamp}.${body}`;
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(webhookSecret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const macBuffer = await crypto.subtle.sign('HMAC', keyMaterial, new TextEncoder().encode(signedPayload));
+  const computedHex = Array.from(new Uint8Array(macBuffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+
+  if (computedHex !== v1) {
+    return new Response(JSON.stringify({ error: 'Stripe signature mismatch' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Signature verified — handle the event
+  let event;
+  try {
+    event = JSON.parse(body);
+  } catch (_) {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Event routing — extend as needed
+  switch (event.type) {
+    case 'checkout.session.completed':
+    case 'invoice.payment_succeeded':
+    case 'customer.subscription.created':
+    case 'customer.subscription.updated':
+    case 'customer.subscription.deleted':
+      // TODO: forward to internal billing service at AGENTS_API
+      break;
+    default:
+      // Unhandled event types are acknowledged but not processed
+      break;
+  }
+
+  return new Response(JSON.stringify({ received: true, type: event.type }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
 
 async function fetchLiveData() {
   try {
@@ -105,13 +253,38 @@ function renderHTML(data, health, now) {
 
 export default {
   async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+
+    // ---------------------------------------------------------------------------
+    // Stripe webhook — public endpoint, authenticated by Stripe signature
+    // ---------------------------------------------------------------------------
+    if (url.pathname === '/webhook/stripe' && request.method === 'POST') {
+      return handleStripeWebhook(request, env);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Health check — unauthenticated, for uptime monitors
+    // ---------------------------------------------------------------------------
+    if (url.pathname === '/health') {
+      return new Response(JSON.stringify({ status: 'ok', worker: 'hr-blackroadio', version: '2.0.0' }), {
+        headers: { 'Content-Type': 'application/json', 'X-BlackRoad-Worker': 'hr-blackroadio' },
+      });
+    }
+
+    // ---------------------------------------------------------------------------
+    // All other routes require a valid API key
+    // ---------------------------------------------------------------------------
+    if (!isAuthenticated(request, env)) {
+      return unauthorizedResponse();
+    }
+
     const now = new Date().toUTCString();
     const [data, health] = await Promise.all([fetchLiveData(), getHealth()]);
     const html = renderHTML(data, health, now);
     return new Response(html, {
       headers: {
         'Content-Type': 'text/html;charset=UTF-8',
-        'Cache-Control': 'public, max-age=30',
+        'Cache-Control': 'private, no-store',
         'X-BlackRoad-Worker': 'hr-blackroadio',
         'X-BlackRoad-Version': '2.0.0',
       },

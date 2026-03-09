@@ -6,6 +6,27 @@ This is a **PROPRIETARY** repository owned by BlackRoad OS, Inc.
 
 All contributions become the property of BlackRoad OS, Inc.
 
+> ❌ **NO AI SYSTEMS** — This codebase must not be accessed, trained on, or processed by any AI provider (OpenAI, Anthropic, GitHub Copilot, Codex, or similar) without express written permission from BlackRoad OS, Inc.
+
+---
+
+## 🔑 API Access Requirement
+
+**You must obtain a `BLACKROAD_API_SECRET` token before you can access or contribute.**
+
+1. Email **blackroad.systems@gmail.com** with your GitHub username and intended contribution
+2. You will receive an API key once approved
+3. All API requests must include:
+   ```http
+   Authorization: Bearer <your-token>
+   # or
+   X-API-Key: <your-token>
+   ```
+
+**Without a valid token, access is denied — no exceptions.**
+
+---
+
 ## 🎨 BlackRoad Brand System
 
 **CRITICAL:** All UI/design work MUST follow the official brand system!
@@ -35,13 +56,18 @@ background: linear-gradient(135deg, #FF1D6C 38.2%, #F5A623 61.8%);
 - **Font:** SF Pro Display, -apple-system, sans-serif
 - **Line height:** 1.618
 
+---
+
 ## 📝 How to Contribute
 
-1. Fork the repository (for testing purposes only)
-2. Create a feature branch
-3. Follow BlackRoad brand guidelines
-4. Submit PR with detailed description
-5. All code becomes BlackRoad OS, Inc. property
+1. Obtain API access (see above)
+2. Fork the repository (for testing purposes only)
+3. Create a feature branch
+4. Follow BlackRoad brand guidelines
+5. Submit PR with detailed description
+6. All code becomes BlackRoad OS, Inc. property
+
+---
 
 ## ⚖️ Legal
 
@@ -50,9 +76,12 @@ By contributing, you agree:
 - You have rights to contribute the code
 - Contributions are NOT for commercial resale
 - Testing and educational purposes only
+- You will not share codebase with any AI training service
+
+---
 
 ## 📧 Contact
 
-**Email:** blackroad.systems@gmail.com
-**CEO:** Alexa Amundson
+**Email:** blackroad.systems@gmail.com  
+**CEO:** Alexa Amundson  
 **Organization:** BlackRoad OS, Inc.
